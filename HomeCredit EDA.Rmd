@@ -1,0 +1,755 @@
+---
+title: "HomeCredit EDA"
+author: "Michael Tom"
+date: "October 08, 2023"
+output: 
+  html_document:
+    highlight: breezedark
+    number_sections: yes
+    toc: yes
+    fig_width: 15
+    fig_height: 10
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduction
+
+**Business Problem/Project Goal**
+
+HomeCredit is an international credit lender that supports customers with little to no credit history. With that in mind they are in need of a way to predict which of their applicants should be approved for loans based around alternative factors. The goal of this project is to create a classification model, using variables form the provided data, that will outperform a majority class classifier on prediction of our target variable (default). 
+
+This EDA Notebook will explore the structure of the provided data, prepare the data for modeling, address missing data and explore different attributes for their potential use in future modeling. 
+
+**Questions to be answered**
+
+* What is our target variable?
+* What is the current % of defaulting loans?
+* What will we do with variables with missing data?
+* What will we do with variables with very low variability?
+* Which variables could be viable for a classification model (which show a difference between default and non default)?
+* How can the additional 6 tables of data be used in our modeling?
+* Will we need to do any transformation on the data to make them work for our models?
+* Are there any indications of errors in the data? If so how will these be addressed?
+* Are there any variables that maybe helpful, but might be discriminatory if used?
+
+
+# Load Packages, Import/Prep Data
+In looking at the summary of the data we answer a few of our questions as well as find a few new ones. We found that we have a total sample size in our training data of 307,511. Of these our target variable is divided 282,686 (92%) for non default vs 24,825 (08%) Default. This shows us that our target for our model is to be able to predict better than a majority classifier of 92%. 
+There are still many items that need addressing before modeling. There are many variables with a large amount of N/A's as well as a low amount of variability. There are also a few data points that need to be check/addressed for accuracy. 
+With the additional 6 data sets we will need to address how they could possibly be brought into our data set to help us in our prediction model. 
+Once these are addressed we should be able to start selecting variables with 2 different types of comparisons. Target vs Categorical check to see if there is a difference in distribution between te different categories. Target vs continuous with these we can compare the means between the target groups to determine if there is a difference which would denote a possible predictor. 
+
+```{r Load Package Prep and Inspect Data}
+
+# Load packages
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(caret)
+
+#import data
+cloud_wd <- getwd()
+setwd(cloud_wd)
+application_test <- read.csv(file = "application_test.csv", stringsAsFactors = TRUE)
+application_train <- read.csv(file = "application_train.csv", stringsAsFactors = TRUE)
+bereau_balance <- read.csv(file = "bureau_balance.csv", stringsAsFactors = TRUE)
+bureau <- read.csv(file = "bureau.csv", stringsAsFactors = TRUE)
+credit_card_balance <- read.csv(file = "credit_card_balance.csv", stringsAsFactors = TRUE)
+installments_payments <- read.csv(file = "installments_payments.csv", stringsAsFactors = TRUE)
+POS_CASH_balance <- read.csv(file = "POS_CASH_balance.csv", stringsAsFactors = TRUE)
+previous_application <- read.csv(file = "previous_application.csv", stringsAsFactors = TRUE)
+
+#Check structure of target data
+str(application_train, list.len = ncol(application_train))
+
+###create working data set
+clean_train <- application_train
+
+###Add Factors to variables
+factors <- c('TARGET','FLAG_MOBIL','FLAG_EMP_PHONE','FLAG_WORK_PHONE','FLAG_CONT_MOBILE','FLAG_PHONE','FLAG_EMAIL','REGION_RATING_CLIENT','REGION_RATING_CLIENT_W_CITY','REG_REGION_NOT_LIVE_REGION','REG_REGION_NOT_WORK_REGION','LIVE_REGION_NOT_WORK_REGION','REG_CITY_NOT_LIVE_CITY','REG_CITY_NOT_WORK_CITY','LIVE_CITY_NOT_WORK_CITY','FLAG_DOCUMENT_2','FLAG_DOCUMENT_3','FLAG_DOCUMENT_4','FLAG_DOCUMENT_5','FLAG_DOCUMENT_6','FLAG_DOCUMENT_7','FLAG_DOCUMENT_8','FLAG_DOCUMENT_9','FLAG_DOCUMENT_10','FLAG_DOCUMENT_11','FLAG_DOCUMENT_12','FLAG_DOCUMENT_13','FLAG_DOCUMENT_14','FLAG_DOCUMENT_15','FLAG_DOCUMENT_16','FLAG_DOCUMENT_17','FLAG_DOCUMENT_18','FLAG_DOCUMENT_19','FLAG_DOCUMENT_20','FLAG_DOCUMENT_21')
+factors
+clean_train[factors] <- lapply(application_train[factors], factor)
+###Check that factors applied
+str(clean_train[factors], list.len =ncol(clean_train))
+
+#Check Summary of data
+## Suppressed due to Length summary(clean_train)
+
+#Check proportion of default
+prop.table(table(clean_train$TARGET))
+
+#Check structure and summary of the bereau_blance data
+str(bereau_balance)
+## Suppressed due to Length summary(bereau_balance)
+
+#Check structure and summary of the bureau data
+str(bureau)
+## Suppressed due to Length summary(bureau)
+
+#Check structure and summary of credit_card_balance
+str(credit_card_balance)
+## Suppressed due to Length summary(credit_card_balance)
+
+#Check structure and summary of installments_payments
+str(installments_payments)
+## Suppressed due to Length summary(installments_payments)
+
+#Check structure and summary of POS_CASH_balance
+str(POS_CASH_balance)
+## Suppressed due to Length summary(POS_CASH_balance)
+
+#Check structure and summary of previous_application
+str(previous_application)
+## Suppressed due to Length summary(previous_application)
+```
+
+
+# N/A and Missing Data
+In examining the missing data we find there are 45 attributes with 35% or more of their data listed as N/A. With such a large amount of the data missing we suggest these variables to be removed from model consideration. 
+There are also 4 attributes with 35% or more data with blanks as with the N/A we would suggest removing these from consideration. 
+After this we have 13 attributes which still contain N/A and 2 which contain blanks that will need addressing. 
+For the remaining we would suggest:
+
+* Anything less than 1% NA or blanks impute the mean vales for the missing. This will remove 6 of the 13 N/A and 1 of the Blanks
+
+* For Ext_Source_3 though there is 19.83% missing data there does seem to be a difference of means between that could indicate as predictor for default. For this we would suggest testing models with this variable imputed. 
+
+* For the AMT_REQ group ()
+
++ For HOUR, DAY, and WEEK 99% of values are either N/A or 0 for these we would suggest exuding these attributes from our models
+
++ FOR MON, QTY, YEAR there are possible indicators of difference in the groups. For these we would suggest imputing the missing values. 
+
+* For OCCUPATION_TYPE/NAME_TYPE_SUITE This does seem to have potential as a predictor in our model. For these we would suggest keeping the blanks as their own category of "undisclosed" and using them in the model. 
+
+```{r}
+#Find % of NA's by attribute
+sort(sapply(clean_train, function(x)
+        round(100*sum(is.na(x))/length(x),2)),decreasing =TRUE)
+
+#Set NA threshold
+NAthreshold <- 35
+
+#count the number of attributes above threshold
+sum(sapply(clean_train, function(x)
+        round(100*sum(is.na(x))/length(x),2))>NAthreshold)
+
+#summarize remaining attributes with NAs below threshold
+
+summary(clean_train[c("EXT_SOURCE_3", "AMT_REQ_CREDIT_BUREAU_HOUR","AMT_REQ_CREDIT_BUREAU_DAY",  "AMT_REQ_CREDIT_BUREAU_WEEK","AMT_REQ_CREDIT_BUREAU_MON","AMT_REQ_CREDIT_BUREAU_QRT","AMT_REQ_CREDIT_BUREAU_YEAR","OBS_30_CNT_SOCIAL_CIRCLE","DEF_30_CNT_SOCIAL_CIRCLE","OBS_60_CNT_SOCIAL_CIRCLE","DEF_60_CNT_SOCIAL_CIRCLE","EXT_SOURCE_2","AMT_GOODS_PRICE")])
+
+#Visualize EXT_SOURCE_3 Boxplot
+ggplot(data = clean_train, aes(x=EXT_SOURCE_3, color= TARGET)) + geom_boxplot() + labs(title = "Ext_SOURCE_3 vs TARGET") + coord_flip()
+
+#Visualize EXT_SOURCE_3 histogram
+ggplot(data = clean_train, aes(x=EXT_SOURCE_3, color= TARGET)) + geom_histogram() + labs(title = "Count Ext_SOURCE_3 vs TARGET") 
+
+#Check EXT_SOURCE_3 distributor vs Target
+clean_train %>%
+    group_by(TARGET) %>%
+    summarise(mean = mean(EXT_SOURCE_3, na.rm = TRUE))
+
+#Visualize AMT_REQ Group
+clean_train %>%
+  group_by(AMT_REQ_CREDIT_BUREAU_HOUR) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100))
+
+clean_train %>%
+  group_by(AMT_REQ_CREDIT_BUREAU_DAY) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100))
+
+clean_train %>%
+  group_by(AMT_REQ_CREDIT_BUREAU_WEEK) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100))
+
+clean_train %>%
+  group_by(AMT_REQ_CREDIT_BUREAU_MON) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+
+clean_train %>%
+  group_by(AMT_REQ_CREDIT_BUREAU_QRT) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+
+clean_train %>%
+  group_by(AMT_REQ_CREDIT_BUREAU_YEAR,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+
+#Find % of blanks by attribute
+sort(sapply(clean_train, function(x)
+        round(100*sum(x=="")/length(x),2)),decreasing =TRUE)
+
+#summarize remaining attributes with blanks below threshold
+summary(clean_train[c("OCCUPATION_TYPE", "NAME_TYPE_SUITE")])
+
+#Visualize OCCUPATION_TYPE
+ggplot(data = clean_train, aes(x=OCCUPATION_TYPE, color = TARGET)) + geom_bar() + labs(title = "Count OCCUPATION_TYPE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+clean_train %>%
+  group_by(OCCUPATION_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+
+#Visualize NAME_TYPE_SUITE
+ggplot(data = clean_train, aes(x=NAME_TYPE_SUITE, color = TARGET)) + geom_bar() + labs(title = "Count NAME_TYPE_SUITE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+clean_train %>%
+  group_by(NAME_TYPE_SUITE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+
+```
+
+
+# Low Variance
+To address low variance within a variable we use a filter to select any variables with 5% or less variance. From this we find 35 variables with less than 5% variance, many of these were also addressed with the N/A group. We would suggest removing all of these from model consideration, with the exception of DAYS_EOMPLOYED which will be addressed in the potential errors section. 
+
+```{r}
+# Run Filter for low variance 
+nearzero <- nearZeroVar(clean_train, freqCut = 95/5 )
+
+# Check the summary of each of the Low variance variables
+summary(clean_train[c(nearzero)])
+```
+
+# Outliars and Potential Errors
+A number of the Outliars/Potential Errors in variables that have not been addressed previously are:
+
+* 4 XNA in CODE_GENDER. There are 4 observations listed as XNA in gender as this number is extremely small we would suggest imputing these 2 with male 2 with female.
+
+* AMT_TOTAL_INCOME. In amount total income we have a few very large incomes that maybe errors or just very high incomes. With them drawing up the average we would suggest using a logged version of this variable to help prediction. 
+
+* DAYS_EMPLOYED in this variable it appears to be if no date is put the data is counting as 365243. For this we would need to check to make sure this assumption is correct. If it is replacing this value with 0 is a possibility.
+
+* AMT_REQ_BUREAU_QRT in this case it appears to be an error outliar with a gap between the max value of 261 to the next value of 19, suggest removing or replacing with second max of 19. 
+
+* Social_Circle outliars in each group there is one observation that is significantly higher than other observations. Since in each group it is only one observation with this removing or replacing with the mean is possible. 
+
+```{r}
+#Address CODE_GENDER
+clean_train %>%
+  group_by(CODE_GENDER,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100))
+
+#Address AMT_INCOME_TOTAL
+
+##Check top 25 values of AMT_INCOME_TOTAL
+format(head(sort(clean_train$AMT_INCOME_TOTAL,decreasing=TRUE), n = 25), big.mark = ",")
+
+##Plot AMT_INCOME_TOTAL
+ggplot(data = clean_train, aes(x=(AMT_INCOME_TOTAL), color = TARGET)) + geom_histogram() +labs(title = "Count AMT_INCOME_TOTAL vs TARGET") 
+
+##Plot same data with Logged Incomes
+ggplot(data = clean_train, aes(x=log(AMT_INCOME_TOTAL), color = TARGET)) + geom_histogram() +labs(title = "Count LoggedAMT_INCOME_TOTAL vs TARGET")
+
+#Address DAYS_EMPLOYED
+
+## Show Summary for Days Employed
+summary(clean_train$DAYS_EMPLOYED)
+
+##Plot Days Employed
+ggplot(data = clean_train, aes(x=(DAYS_EMPLOYED), color = TARGET)) + geom_histogram() +labs(title = "Count DAYS_EMPLOYED vs TARGET") 
+
+##Replace 365243 with 0
+DEtest <- clean_train %>%
+    mutate(DAYS_EMPLOYED = replace(DAYS_EMPLOYED, DAYS_EMPLOYED == 365243, 0))
+
+##Recheck summary and plot
+summary(DEtest$DAYS_EMPLOYED)
+ggplot(data = DEtest, aes(x=(DAYS_EMPLOYED), color = TARGET)) + geom_histogram() +labs(title = "Count CORRECTED DAYS EMPLOYED vs TARGET") 
+
+#Address AMT_REQ_BUREAU_QRT max
+
+##Check Summary of AMT_REQ_BUREAU_QRT
+summary(clean_train$AMT_REQ_CREDIT_BUREAU_QRT)
+
+##Plot to check for outliar
+ggplot(data = DEtest, aes(x=(AMT_REQ_CREDIT_BUREAU_QRT), color = TARGET)) + geom_histogram()+labs(title = "AMT_REQ_CREDIT_BUREAU_QRT vs TARGET") 
+
+##Check top values
+head(sort(clean_train$AMT_REQ_CREDIT_BUREAU_QRT, decreasing =TRUE))
+
+#Address outliars in OBS_30_CNT_SOCIAL_CIRCLE, DEF_30_CNT_SOCIAL_CIRCLE, OBS_60_CNT_SOCIAL_CIRCLE, DEF_60_CNT_SOCIAL_CIRCLE
+
+##Check summary
+summary(clean_train[c('OBS_30_CNT_SOCIAL_CIRCLE', 'DEF_30_CNT_SOCIAL_CIRCLE', 'OBS_60_CNT_SOCIAL_CIRCLE', 'DEF_60_CNT_SOCIAL_CIRCLE')])
+
+##Check top Values
+format(head(sort(clean_train$OBS_30_CNT_SOCIAL_CIRCLE,decreasing=TRUE), n = 10), big.mark = ",")
+format(head(sort(clean_train$DEF_30_CNT_SOCIAL_CIRCLE,decreasing=TRUE), n = 10), big.mark = ",")
+format(head(sort(clean_train$OBS_60_CNT_SOCIAL_CIRCLE,decreasing=TRUE), n = 10), big.mark = ",")
+format(head(sort(clean_train$DEF_60_CNT_SOCIAL_CIRCLE,decreasing=TRUE), n = 10), big.mark = ",")
+
+#Test impact of imputing top value
+SCtest <- clean_train %>%
+    mutate(OBS_30_CNT_SOCIAL_CIRCLE = replace(OBS_30_CNT_SOCIAL_CIRCLE, OBS_30_CNT_SOCIAL_CIRCLE == 348, 0))
+
+##Plot with outliar removed
+ggplot(data = SCtest, aes(x=(OBS_30_CNT_SOCIAL_CIRCLE), color = TARGET)) + geom_histogram() + labs(title = "OBS_30_CNT_SOCIAL_CIRCLE Outliar Removed vs TARGET") 
+
+##Check Summary
+summary(SCtest$OBS_30_CNT_SOCIAL_CIRCLE)
+```
+
+
+# Additional Data Sets
+In this section we look at some possibilities for additional data to be added to our training data. Here we use 2 examples, one from the bureau data and one from the credit card balance data. From the bureau data the data we are interested in is if a loan had credit that was overdue, what was the highest number of days that was overdue. When we pull this in we found a difference in means between our target group, making it a possible predictor for our model. 
+
+From the credit card balance DF the variable of interest is latest credit card balance before application. When pulling this in we found a large amount of Na's (220,606 or 71.7%). The amount of NA's would make it a possibility for excluding, but with the observations reported we do see a difference in means between our target groups. 
+
+When modeling other interesting variable options could be:
+
+* bureau, AMT_CREDIT_SUM, total credit amount (total credit)
+
+* POS_CASH_balance, MONTHS_BALANCE, Month of balance relative to application (cash on hand)
+
+* POS_CASH_balance, SK_DPD, days past due (overdue credit)
+
+* credit_card_balance, AMT_CREDIT_LIMIT_ACTUAL, Credit card limit 
+
+* previous_application, CODE_REJECT_REASON, reason for previous application rejection (any previous rejections?)
+
+* previous_application, AMT_CREDIT, Final credit amount from previous application
+```{r}
+#Add Credit Day Overdue
+
+##Check Structure and Summary
+str(bureau)
+summary(bureau)
+summary(bureau$CREDIT_DAY_OVERDUE)
+
+##Create new DF with max line of Credit Days Overdue for each SK_ID
+overdue_credit_max <- bureau %>%
+    group_by(SK_ID_CURR) %>%
+    slice(which.max(CREDIT_DAY_OVERDUE))
+
+##Create new DF with Credit Days Overdue added
+overdue <- clean_train %>%
+    left_join(select(overdue_credit_max, CREDIT_DAY_OVERDUE), by="SK_ID_CURR")
+
+##CHECK Summary 
+summary(overdue$CREDIT_DAY_OVERDUE)
+
+##Create Boxplot to check for mean variation
+ggplot(data = overdue, aes(x=log(CREDIT_DAY_OVERDUE), color = TARGET)) + geom_boxplot() + labs(title = "Logged CREDIT DAYS OVERDUE vs TARGET") 
+
+
+#Add AMT Balance
+
+##Check structure and summary of credit_card_balance
+str(credit_card_balance)
+summary(credit_card_balance)
+
+##Create new DF with one line per CC balance for each SK_ID
+newccbalance <- credit_card_balance %>%
+    group_by(SK_ID_CURR) %>%
+    slice(which.max(MONTHS_BALANCE))
+
+##Create new DF joining new data
+ccbalance <- clean_train %>%
+    left_join(select(newccbalance, AMT_BALANCE), by="SK_ID_CURR")
+
+##Check summary of added data
+summary(ccbalance$AMT_BALANCE)
+
+##Plot Data
+ggplot(data = ccbalance, aes(x=(AMT_BALANCE), color = TARGET)) + geom_boxplot() + labs(title = "AMT CC BALANCE vs TARGET") 
+```
+
+
+# Predictors
+After removing the large NAs, blanks, and low variance there were 46 remaining variables that needed testing for potential prediction power. For these we placed each of the variables into 1 of 3 groups Strong difference between groups, some difference between groups, no difference between groups. To classify these we compared a % of default vs non default for each group in a categorical data, and mean values between continuous variables. 
+
+The results gave us 10 Strong Differences, 16 Some Differences, 20 No Differences. Our 10 Strong Differences variables are:
+
+1. NAME_INCOME_TYPE
+2. NAME_HOUSING_TYPE
+3. DAYS_BIRTH
+4. DAYS_EMPLOYED
+5. REGION_RATING_CLIENT
+6. REGION_RATING_CLIENT_W_CITY
+7. REG_CITY_NOT_LIVE_CITY
+8. EXT_SOURCE_1
+9. EXT_SOURCE_2
+10. EXT_SOURCE_3
+
+These would be our starting point for variable selection in our models. 
+
+## Strong Predictors
+
+```{r}
+
+#NAME_INCOME_TYPE Large difference between gruops, potential strong predictor
+clean_train %>%
+  group_by(NAME_INCOME_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=NAME_INCOME_TYPE, color = TARGET)) + geom_bar() + labs(title = "NAME_INCOME_TYPE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+#NAME_HOUSING_TYPE LARGE difference between groups, potential Strong predictor
+clean_train %>%
+  group_by(NAME_HOUSING_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=NAME_HOUSING_TYPE, color = TARGET)) + geom_bar() + labs(title = "NAME_HOUSING_TYPE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+#DAYS_BIRTH LARGE difference in Means strong possibility of prediction
+ggplot(data = clean_train, aes(x=(DAYS_BIRTH), color = TARGET)) + geom_boxplot() + labs(title = "DAYS_BIRTH vs TARGET") + coord_flip()
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((DAYS_BIRTH)))
+
+#DAYS_EMPLOYED LARGE difference in Means strong possibility of prediction, after transformation of data
+ggplot(data = DEtest, aes(x=(DAYS_EMPLOYED), color = TARGET)) + geom_boxplot() + labs(title = "DAYS_EMPLOYED vs TARGET")
+clean_train %>%
+  group_by(TARGET) %>%
+     mutate(DAYS_EMPLOYED = replace(DAYS_EMPLOYED, DAYS_EMPLOYED == 365243, 0)) %>%
+    summarise(mean = mean((DAYS_EMPLOYED)))
+
+#REGION_RATING_CLIENT Large differences between groups Strong possibility for prediction
+clean_train %>%
+  group_by(REGION_RATING_CLIENT,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=REGION_RATING_CLIENT, color = TARGET)) + geom_bar() + labs(title = "REGION_RATING_CLIENT vs TARGET") 
+
+#REGION_RATING_CLIENT_W_CITY Large differences between groups Strong possibility for prediction
+clean_train %>%
+  group_by(REGION_RATING_CLIENT_W_CITY,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=REGION_RATING_CLIENT_W_CITY, color = TARGET)) + geom_bar() + labs(title = "REGION_RATING_CLIENT_W_CITY vs TARGET") 
+
+#REG_CITY_NOT_LIVE_CITY large difference for those not living in city 12.2% default Strong possible for prediction
+clean_train %>%
+  group_by(REG_CITY_NOT_LIVE_CITY,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=REG_CITY_NOT_LIVE_CITY, color = TARGET)) + geom_bar() + labs(title = "REG_CITY_NOT_LIVE_CITY vs TARGET") 
+
+#EXT_SOURCE_1 Strong difference in means after replacing NA with mean
+ggplot(data = clean_train, aes(x=(EXT_SOURCE_1), color = TARGET)) + geom_boxplot() + labs(title = "EXT_SOURCE_1 vs TARGET") + coord_flip()
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(EXT_SOURCE_1, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((EXT_SOURCE_1)))
+
+#EXT_SOURCE_2 Strong difference in means after replacing NA with mean
+ggplot(data = clean_train, aes(x=(EXT_SOURCE_2), color = TARGET)) + geom_boxplot() + labs(title = "EXT_SOURCE_2 vs TARGET") + coord_flip()
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(EXT_SOURCE_2, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((EXT_SOURCE_2)))
+
+#EXT_SOURCE_3 Strong difference in means after replacing NA with mean
+ggplot(data = clean_train, aes(x=(EXT_SOURCE_3), color = TARGET)) + geom_boxplot() + labs(title = "EXT_SOURCE_3 vs TARGET") + coord_flip()
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(EXT_SOURCE_3, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((EXT_SOURCE_3)))
+
+#NAME_FAMILY_STATUS difference between groups, potential predictor
+clean_train %>%
+  group_by(NAME_FAMILY_STATUS,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=NAME_FAMILY_STATUS, color = TARGET)) + geom_bar() + labs(title = "NAME_FAMILY_STATUS vs TARGET") 
+
+
+```
+
+## Some Difference
+
+```{r}
+
+#NAME_CONTRACT_TYPE 3% difference between default on cash loans
+clean_train %>%
+  group_by(NAME_CONTRACT_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=NAME_CONTRACT_TYPE, color = TARGET)) + geom_bar() + labs(title = "NAME_CONTRACT_TYPE vs TARGET") 
+
+#CODE_GENDER 2% difference between M & F 
+clean_train %>%
+  group_by(CODE_GENDER,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100))
+ggplot(data = clean_train, aes(x=CODE_GENDER, color = TARGET)) + geom_bar() + labs(title = "CODE_GENDER vs TARGET") 
+
+#CNT_CHILDREN Higher default as more children max at 28% for 6 children
+clean_train %>%
+  group_by(CNT_CHILDREN,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=CNT_CHILDREN, color = TARGET)) + geom_bar() + labs(title = "CNT_CHILDREN vs TARGET") 
+
+#AMT_GOODS_PRICE Possible significant difference in means. Needed to replace 278 NA with Avg of Group
+ggplot(data = clean_train, aes(x=(AMT_GOODS_PRICE), color = TARGET)) + geom_boxplot() + labs(title = "AMT_GOODS_PRICE vs TARGET") 
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(AMT_GOODS_PRICE, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((AMT_GOODS_PRICE)))
+
+#NAME_EDUCATION_TYPE small difference between groups, potential predictor
+clean_train %>%
+  group_by(NAME_EDUCATION_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=NAME_EDUCATION_TYPE, color = TARGET)) + geom_bar() + labs(title = "NAME_EDUCATION_TYPE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+#DAYS_REGISTRATION slight difference in means possibility of prediction
+ggplot(data = DEtest, aes(x=(DAYS_REGISTRATION), color = TARGET)) + geom_boxplot() + labs(title = "DAYS_REGISTRATION vs TARGET")
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((DAYS_REGISTRATION)))
+
+#DAYS_ID_PUBLISH slight difference in means possibility of prediction
+ggplot(data = DEtest, aes(x=(DAYS_ID_PUBLISH), color = TARGET)) + geom_boxplot() + labs(title = "DAYS_ID_PUBLISH vs TARGET") + coord_flip()
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((DAYS_ID_PUBLISH)))
+
+#FLAG_EMP_PHONE 3% difference between groups possibility of prediction
+clean_train %>%
+  group_by(FLAG_EMP_PHONE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_EMP_PHONE, color = TARGET)) + geom_bar() + labs(title = "FLAG_EMP_PHONE vs TARGET") 
+
+#OCCUPATION_TYPE Visualize Varying differences between groups 
+ggplot(data = clean_train, aes(x=OCCUPATION_TYPE, color = TARGET)) + geom_bar() + labs(title = "Count OCCUPATION_TYPE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+clean_train %>%
+  group_by(OCCUPATION_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+
+#CNT_FAM_MEMBERS Same distribution as cnt_children possible for prediction
+clean_train %>%
+  group_by(CNT_FAM_MEMBERS,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=CNT_FAM_MEMBERS, color = TARGET)) + geom_bar() + labs(title = "CNT_FAM_MEMBERS vs TARGET")
+
+#REG_CITY_NOT_WORK_CITY large difference for those not living in city 10.6% default possible for prediction
+clean_train %>%
+  group_by(REG_CITY_NOT_WORK_CITY,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=REG_CITY_NOT_WORK_CITY, color = TARGET)) + geom_bar() + labs(title = "REG_CITY_NOT_WORK_CITY vs TARGET")
+
+#LIVE_CITY_NOT_WORK_CITY large difference for those not living in city 9.97% default possible for prediction
+clean_train %>%
+  group_by(LIVE_CITY_NOT_WORK_CITY,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=LIVE_CITY_NOT_WORK_CITY, color = TARGET)) + geom_bar() + labs(title = "LIVE_CITY_NOT_WORK_CITY vs TARGET")
+
+#ORGANIZATION_TYPE lots of variation between groups possible for prediction
+clean_train %>%
+  group_by(ORGANIZATION_TYPE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=ORGANIZATION_TYPE, color = TARGET)) + geom_bar() + labs(title = "ORGANIZATION_TYPE vs TARGET") + theme(axis.text.x = element_text(size = 5, angle = 45, hjust = 1))
+
+#DAYS_LAST_PHONE_CHANGE difference in means possible predictor
+ggplot(data = clean_train, aes(x=(DAYS_LAST_PHONE_CHANGE), color = TARGET)) + geom_boxplot() + labs(title = "DAYS_LAST_PHONE_CHANGE vs TARGET") 
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(DAYS_LAST_PHONE_CHANGE, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((DAYS_LAST_PHONE_CHANGE)))
+
+#FLAG_DOCUMENT_6 large difference between default in those who provided the doc. possible
+clean_train %>%
+  group_by(FLAG_DOCUMENT_6,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_DOCUMENT_6, color = TARGET)) + geom_bar() + labs(title = "FLAG_DOCUMENT_6 vs TARGET") 
+
+```
+
+## No Difference
+
+```{r}
+#FLAG_OWN_CAR 1.25% difference between default on No vs Yes
+clean_train %>%
+  group_by(FLAG_OWN_CAR,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_OWN_CAR, color = TARGET)) + geom_bar() + labs(title = "FLAG_OWN_CAR vs TARGET") 
+
+#FLAG_OWN_REALTY >1% difference between default on No vs Yes
+clean_train %>%
+  group_by(FLAG_OWN_REALTY,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_OWN_REALTY, color = TARGET)) + geom_bar() + labs(title = "FLAG_OWN_REALTY vs TARGET") 
+
+#AMT_INCOME_TOTAL no significant difference in values or logged values. Need to address outliars
+ggplot(data = clean_train, aes(x=log(AMT_INCOME_TOTAL), color = TARGET)) + geom_boxplot() + labs(title = "AMT_INCOME_TOTAL vs TARGET") 
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((AMT_INCOME_TOTAL)))
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean(log(AMT_INCOME_TOTAL)))
+
+#AMT_CREDIT no significant difference in means.
+ggplot(data = clean_train, aes(x=(AMT_CREDIT), color = TARGET)) + geom_boxplot() + labs(title = "AMT_CREDIT vs TARGET") 
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((AMT_CREDIT)))
+
+#AMT_ANNUITY no significant difference in means.needed to replace 12 NA with Avg of Group
+ggplot(data = clean_train, aes(x=(AMT_ANNUITY), color = TARGET)) + geom_boxplot() + labs(title = "AMT_CREDIT vs TARGET") 
+clean_train %>%
+    mutate(across(AMT_ANNUITY, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((AMT_ANNUITY)))
+
+#NAME_TYPE_SUITE No significant difference between groups
+clean_train %>%
+  group_by(NAME_TYPE_SUITE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=NAME_TYPE_SUITE, color = TARGET)) + geom_bar() + labs(title = "NAME_TYPE_SUITE vs TARGET") + theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+#REGION_POPULATION_RELATIVE No large differnce in means
+ggplot(data = clean_train, aes(x=(REGION_POPULATION_RELATIVE), color = TARGET)) + geom_boxplot()
+clean_train %>%
+  group_by(TARGET) %>%
+    summarise(mean = mean((REGION_POPULATION_RELATIVE)))
+
+#FLAG_WORK_PHONE no large difference in groups
+clean_train %>%
+  group_by(FLAG_WORK_PHONE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_WORK_PHONE, color = TARGET)) + geom_bar() + labs(title = "FLAG_WORK_PHONE vs TARGET")
+
+#FLAG_PHONE no large difference in groups
+clean_train %>%
+  group_by(FLAG_PHONE,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_PHONE, color = TARGET)) + geom_bar() + labs(title = "FLAG_PHONE vs TARGET")
+
+#FLAG_EMAIL no large difference in groups
+clean_train %>%
+  group_by(FLAG_EMAIL,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_EMAIL, color = TARGET)) + geom_bar() + labs(title = "FLAG_EMAIL vs TARGET")
+
+#WEEKDAY_APPR_PROCESS_START No Large difference in groups. 
+clean_train %>%
+  group_by(WEEKDAY_APPR_PROCESS_START,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=WEEKDAY_APPR_PROCESS_START, color = TARGET)) + geom_bar() + labs(title = "WEEKDAY_APPR_PROCESS_START vs TARGET")
+
+#HOUR_APPR_PROCESS_START Higher default rates in the early morning and late evening but much smaller groups during these times
+clean_train %>%
+  group_by(HOUR_APPR_PROCESS_START,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=HOUR_APPR_PROCESS_START, color = TARGET)) + geom_bar() + labs(title = "HOUR_APPR_PROCESS_START vs TARGET")
+
+#LIVE_REGION_NOT_WORK_REGION No large difference in groups
+clean_train %>%
+  group_by(LIVE_REGION_NOT_WORK_REGION,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=LIVE_REGION_NOT_WORK_REGION, color = TARGET)) + geom_bar() + labs(title = "LIVE_REGION_NOT_WORK_REGION vs TARGET")
+
+
+#OBS_30_CNT_SOCIAL_CIRCLE No difference in Means even with removed outliars
+ggplot(data = SCtest, aes(x=(OBS_30_CNT_SOCIAL_CIRCLE), color = TARGET)) + geom_boxplot() + labs(title = "OBS_30_CNT_SOCIAL_CIRCLE vs TARGET")
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(OBS_30_CNT_SOCIAL_CIRCLE, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((OBS_30_CNT_SOCIAL_CIRCLE)))
+
+#DEF_30_CNT_SOCIAL_CIRCLE No difference in Means even with removed outliars
+ggplot(data = clean_train, aes(x=(DEF_30_CNT_SOCIAL_CIRCLE), color = TARGET)) + geom_boxplot() + labs(title = "DEF_30_CNT_SOCIAL_CIRCLE vs TARGET")
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(DEF_30_CNT_SOCIAL_CIRCLE, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((DEF_30_CNT_SOCIAL_CIRCLE)))
+
+#OBS_60_CNT_SOCIAL_CIRCLE No difference in Means even with removed outliars
+ggplot(data = clean_train, aes(x=(OBS_60_CNT_SOCIAL_CIRCLE), color = TARGET)) + geom_boxplot() + labs(title = "OBS_60_CNT_SOCIAL_CIRCLE vs TARGET")
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(OBS_60_CNT_SOCIAL_CIRCLE, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((OBS_60_CNT_SOCIAL_CIRCLE)))
+
+#DEF_60_CNT_SOCIAL_CIRCLE No difference in Means even with removed outliars
+ggplot(data = clean_train, aes(x=(DEF_60_CNT_SOCIAL_CIRCLE), color = TARGET)) + geom_boxplot() + labs(title = "DEF_60_CNT_SOCIAL_CIRCLE vs TARGET")
+clean_train %>%
+  group_by(TARGET) %>%
+    mutate(across(DEF_60_CNT_SOCIAL_CIRCLE, ~replace_na(., mean(., na.rm=TRUE)))) %>%
+    summarise(mean = mean((DEF_60_CNT_SOCIAL_CIRCLE)))
+
+#FLAG_DOCUMENT_3 no large difference between groups
+clean_train %>%
+  group_by(FLAG_DOCUMENT_3,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_DOCUMENT_3, color = TARGET)) + geom_bar() + labs(title = "FLAG_DOCUMENT_3 vs TARGET")
+
+#FLAG_DOCUMENT_8 no large difference between default in those who provided the doc. possible
+clean_train %>%
+  group_by(FLAG_DOCUMENT_8,TARGET) %>%
+    summarise(n=n()) %>%
+    mutate(freq = (n/ sum(n)*100)) %>%
+    print( n = 50)
+ggplot(data = clean_train, aes(x=FLAG_DOCUMENT_8, color = TARGET)) + geom_bar() + labs(title = "FLAG_DOCUMENT_8 vs TARGET")
+
+
+```
+
+
+# EDA RESULTS
+In this EDA notebook we have made great strides in understanding and preparing our data for modeling. We found our target variable has a 92% non default to 08% default rate. Our definition for success will be out performing this baseline. We were able to address many of the potential issues with the data around how to handle N/As and blanks. For these a suggestion of anything with 35% or more NAs or Blanks be removed from model consideration (49 total variables suggested). We also addressed all variables between 35% and 0% NAs or blanks and provided suggestions for each. We used a low variance filter to suggest and variables with less than 5% variability be removed from model consideration (35 total variables suggested). We then made suggestions for potential errors and outliars with in the data. We looked at the 6 other provided data sources and provided 2 examples of how we could use these data sets as well as other suggestions for the modeling phase. Lastly we identified 10 potential strong predictors and 16 moderate predictors from our remaining variables. Though many of this work was more subjective than I would have liked it, I think that this exercise has yielded many great observations into the HomeCredit datasets and set us up for success in our upcoming modeling stage.  
+

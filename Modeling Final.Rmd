@@ -1,0 +1,539 @@
+---
+title: "HomeCredit Modeling"
+author: "Michael Tom"
+date: "October 08, 2023"
+output: 
+  html_document:
+    highlight: breezedark
+    number_sections: yes
+    toc: yes
+    fig_width: 15
+    fig_height: 10
+editor_options: 
+  chunk_output_type: console
+---
+
+#Load Packages and Data
+```{r setup, include=FALSE}
+
+# Load packages
+library(tidyverse)
+library(tidymodels)
+library(dplyr)
+library(ranger)
+library(themis)
+library(tictoc)
+
+
+#read in test data
+clean_test <- read_csv('clean_test.csv') %>% 
+  mutate_if(is.character, as.factor)
+
+ # Initialize all values to 0 as factors
+clean_test$TARGET <- factor(0) 
+
+#Add TARGET as a factor to new column TARGET
+clean_test$TARGET <- factor(clean_test$TARGET, 
+                              levels = c(0, 1), labels = c(0, 1))
+
+#Read in Train Data
+clean_train <- read.csv(file = "clean_train.csv", stringsAsFactors = TRUE)
+summary(clean_train)
+
+#Factor TARGET
+clean_train$TARGET <- factor(clean_train$TARGET, 
+                             levels = c(0, 1), labels = c('No', 'Yes'))
+
+```
+
+#RF 1 Tune Grid, 1.5 DownSample
+```{r}
+
+tic()
+set.seed(123)
+#Create Random Forest Train Data set
+RF1Tune1.5ds <- clean_train
+
+#Split Data 75% Training 25% Test
+RF1Tune1.5dssplit <- initial_split(RF1Tune1.5ds, strata = TARGET, prop = 0.75)
+RF1Tune1.5dstrain <- training(RF1Tune1.5dssplit)
+RF1Tune1.5dstest <- testing(RF1Tune1.5dssplit)
+
+#Create Recipe with 1.5 Downsample
+RF1Tune1.5dsrecipe <- recipe(TARGET ~ ., data = RF1Tune1.5dstrain)
+
+#Create Model with Hyperperameter Tuning (Set Perameters based on tuning to save run time)
+RF1Tune1.5dsmodel <- rand_forest(
+  mtry = (14),
+  trees = (1343),
+  min_n = (33))%>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+#Set 5 fold CV
+RF1Tune1.5dsfolds <- vfold_cv(RF1Tune1.5dstrain, v=5)
+
+doParallel::registerDoParallel(cores = 8)
+
+#Create Workflow
+RF1Tune1.5ds_WF <- workflow () %>%
+    add_model(RF1Tune1.5dsmodel) %>%
+    add_recipe(RF1Tune1.5dsrecipe)
+
+#Tune Model with grid = 1 (very time intensive)
+# 50 Grid gives mtry (14), trees (1343), min_n (33)
+#RF1Tune1.5ds_tune <- RF1Tune1.5ds_WF %>% tune_grid( resamples = RF1Tune1.5dsfolds, grid = 1)
+
+#Create Best model using ROC_AUC
+#best_modelRF1Tune1.5ds <- RF1Tune1.5ds_tune %>% select_best ("roc_auc")
+#best_modelRF1Tune1.5ds
+
+#Create final WF based on best model
+finalWFRF1Tune1.5dsmodel <- RF1Tune1.5ds_WF %>% finalize_workflow(RF1Tune1.5dsmodel)
+
+#Create final fit
+final_fitRF1Tune1.5dsmodel <- finalWFRF1Tune1.5dsmodel %>% last_fit(split = RF1Tune1.5dssplit)
+
+#Run Final Fit
+final_fitRF1Tune1.5dsmodel %>% collect_metrics()
+
+#Create Confusion matrix
+final_fitRF1Tune1.5dsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#extract WF
+final_wfRF1Tune1.5dsmodel <- final_fitRF1Tune1.5dsmodel %>%
+  extract_workflow()
+final_wfRF1Tune1.5dsmodel
+
+#Predict on test data
+RF1Tune1.5dsPred <- predict(final_wfRF1Tune1.5dsmodel, new_data = clean_test, type = 'prob')
+#Generate Submission
+submission <- data.frame(SK_ID_CURR = as.integer(clean_test$SK_ID_CURR), TARGET = RF1Tune1.5dsPred)
+summary(submission)
+submission <- submission %>% rename ("TARGET" = "TARGET..pred_Yes") %>% select(c(SK_ID_CURR, TARGET))
+write.csv(submission, file = 'RF1Tune1.5dsmodel.csv', row.names = FALSE)
+    
+toc()
+
+
+```
+
+
+#RF 1 Tune Grid, No DownSample
+```{r}
+
+tic()
+set.seed(123)
+#Create Random Forest Train Data set
+RF1TuneNods <- clean_train
+
+#Split Data 75% Training 25% Test
+RF1TuneNodssplit <- initial_split(RF1TuneNods, strata = TARGET, prop = 0.75)
+RF1TuneNodstrain <- training(RF1TuneNodssplit)
+RF1TuneNodstest <- testing(RF1TuneNodssplit)
+
+#Create Recipe with 1.5 Downsample
+RF1TuneNodsrecipe <- recipe(TARGET ~ ., data = RF1TuneNodstrain) %>% step_downsample(TARGET, under_ratio = 1.5)
+
+#Create Model with Hyperperameter Tuning (Set Perameters based on tuning to save run time)
+RF1TuneNodsmodel <- rand_forest(
+  mtry = (14),
+  trees = (1343),
+  min_n = (33))%>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+#Set 5 fold CV
+RF1TuneNodsfolds <- vfold_cv(RF1TuneNodstrain, v=5)
+
+doParallel::registerDoParallel(cores = 8)
+
+#Create Workflow
+RF1TuneNods_WF <- workflow () %>%
+    add_model(RF1TuneNodsmodel) %>%
+    add_recipe(RF1TuneNodsrecipe)
+
+#Tune Model with grid = 1 (very time intensive)
+# 50 Grid gives mtry (14), trees (1343), min_n (33)
+#RF1TuneNods_tune <- RF1TuneNods_WF %>% tune_grid( resamples = RF1TuneNodsfolds, grid = 1)
+
+#Create Best model using ROC_AUC
+#best_modelRF1TuneNods <- RF1TuneNods_tune %>% select_best ("roc_auc")
+#best_modelRF1TuneNods
+
+#Create final WF based on best model
+finalWFRF1TuneNodsmodel <- RF1TuneNods_WF %>% finalize_workflow(RF1TuneNods_WF)
+
+#Create final fit
+final_fitRF1TuneNodsmodel <- finalWFRF1TuneNodsmodel %>% last_fit(split = RF1TuneNodssplit)
+
+#Run Final Fit
+final_fitRF1TuneNodsmodel %>% collect_metrics()
+
+#Create Confusion matrix
+final_fitRF1TuneNodsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#extract WF
+final_wfRF1TuneNodsmodel <- final_fitRF1TuneNodsmodel %>%
+  extract_workflow()
+final_wfRF1TuneNodsmodel
+
+#Predict on test data
+RF1TuneNodsPred <- predict(final_wfRF1TuneNodsmodel, new_data = clean_test, type = 'prob')
+#Generate Submission
+submission <- data.frame(SK_ID_CURR = as.integer(clean_test$SK_ID_CURR), TARGET = RF1TuneNodsPred)
+summary(submission)
+submission <- submission %>% rename ("TARGET" = "TARGET..pred_Yes") %>% select(c(SK_ID_CURR, TARGET))
+write.csv(submission, file = 'RF1TuneNodsmodel.csv', row.names = FALSE)
+    
+toc()
+
+```
+
+#RF 50 Tune Grid, 1.5 DownSample
+```{r}
+
+tic()
+set.seed(123)
+#Create Random Forest Train Data set
+RF50Tune1.5ds <- clean_train
+
+#Split Data 75% Training 25% Test
+RF50Tune1.5dssplit <- initial_split(RF50Tune1.5ds, strata = TARGET, prop = 0.75)
+RF50Tune1.5dstrain <- training(RF50Tune1.5dssplit)
+RF50Tune1.5dstest <- testing(RF50Tune1.5dssplit)
+
+#Create Recipe with 1.5 Downsample
+RF50Tune1.5dsrecipe <- recipe(TARGET ~ ., data = RF50Tune1.5dstrain) %>% step_downsample(TARGET, under_ratio = 1.5)
+
+#Create Model with Hyperperameter Tuning (Set Perameters based on tuning to save run time)
+RF50Tune1.5dsmodel <- rand_forest(
+  mtry = (2),
+  trees = (727),
+  min_n = (31)) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+#Set 5 fold CV
+RF50Tune1.5dsfolds <- vfold_cv(RF50Tune1.5dstrain, v=5)
+
+doParallel::registerDoParallel(cores = 8)
+
+#Create Workflow
+RF50Tune1.5ds_WF <- workflow () %>%
+    add_model(RF50Tune1.5dsmodel) %>%
+    add_recipe(RF50Tune1.5dsrecipe)
+
+#Tune Model with grid = 50 (very time intensive)
+# 50 Grid gives mtry (2), trees (727), min_n (31)
+#RF50Tune1.5ds_tune <- RF50Tune1.5ds_WF %>% tune_grid( resamples = RF50Tune1.5dsfolds, grid = 50)
+
+#Create Best model using ROC_AUC
+#best_modelRF50Tune1.5ds <- RF50Tune1.5ds_tune %>% select_best ("roc_auc")
+#best_modelRF50Tune1.5ds
+
+#Create final WF based on best model
+finalWFRF50Tune1.5dsmodel <- RF50Tune1.5ds_WF %>% finalize_workflow(RF50Tune1.5dsmodel)
+
+#Create final fit
+final_fitRF50Tune1.5dsmodel <- finalWFRF50Tune1.5dsmodel %>% last_fit(split = RF50Tune1.5dssplit)
+
+#Run Final Fit
+final_fitRF50Tune1.5dsmodel %>% collect_metrics()
+
+#Create Confusion matrix
+final_fitRF50Tune1.5dsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#extract WF
+final_wfRF50Tune1.5dsmodel <- final_fitRF50Tune1.5dsmodel %>%
+  extract_workflow()
+final_wfRF50Tune1.5dsmodel
+
+#Predict on test data
+RF50Tune1.5dsPred <- predict(final_wfRF50Tune1.5dsmodel, new_data = clean_test, type = 'prob')
+#Generate Submission
+submission <- data.frame(SK_ID_CURR = as.integer(clean_test$SK_ID_CURR), TARGET = RF50Tune1.5dsPred)
+summary(submission)
+submission <- submission %>% rename ("TARGET" = "TARGET..pred_Yes") %>% select(c(SK_ID_CURR, TARGET))
+write.csv(submission, file = 'RF50Tune1.5dsmodel.csv', row.names = FALSE)
+    
+toc()
+
+```
+
+
+#RF 50 Tune Grid, No DownSample
+```{r}
+
+tic()
+set.seed(123)
+#Create Random Forest Train Data set
+RF50TuneNods <- clean_train
+
+#Split Data 75% Training 25% Test
+RF50TuneNodssplit <- initial_split(RF50TuneNods, strata = TARGET, prop = 0.75)
+RF50TuneNodstrain <- training(RF50TuneNodssplit)
+RF50TuneNodstest <- testing(RF50TuneNodssplit)
+
+#Create Recipe with 1.5 Downsample
+RF50TuneNodsrecipe <- recipe(TARGET ~ ., data = RF50TuneNodstrain)
+
+#Create Model with Hyperperameter Tuning (Set Perameters based on tuning to save run time)
+RF50TuneNodsmodel <- rand_forest(
+  mtry = (2),
+  trees = (727),
+  min_n = (31)) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+#Set 5 fold CV
+RF50TuneNodsfolds <- vfold_cv(RF50TuneNodstrain, v=5)
+
+doParallel::registerDoParallel(cores = 8)
+
+#Create Workflow
+RF50TuneNods_WF <- workflow () %>%
+    add_model(RF50TuneNodsmodel) %>%
+    add_recipe(RF50TuneNodsrecipe)
+
+#Tune Model with grid = 50 (very time intensive)
+# 50 Grid gives mtry (2), trees (727), min_n (31)
+#RF50TuneNods_tune <- RF50TuneNods_WF %>% tune_grid( resamples = RF50TuneNodsfolds, grid = 50)
+
+#Create Best model using ROC_AUC
+#best_modelRF50TuneNods <- RF50TuneNods_tune %>% select_best ("roc_auc")
+#best_modelRF50TuneNods
+
+#Create final WF based on best model
+finalWFRF50TuneNodsmodel <- RF50TuneNods_WF %>% finalize_workflow(RF50TuneNodsmodel)
+
+#Create final fit
+final_fitRF50TuneNodsmodel <- finalWFRF50TuneNodsmodel %>% last_fit(split = RF50TuneNodssplit)
+
+#Run Final Fit
+final_fitRF50TuneNodsmodel %>% collect_metrics()
+
+#Create Confusion matrix
+final_fitRF50TuneNodsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#extract WF
+final_wfRF50TuneNodsmodel <- final_fitRF50TuneNodsmodel %>%
+  extract_workflow()
+final_wfRF50TuneNodsmodel
+
+#Predict on test data
+RF50TuneNodsPred <- predict(final_wfRF50TuneNodsmodel, new_data = clean_test, type = 'prob')
+#Generate Submission
+submission <- data.frame(SK_ID_CURR = as.integer(clean_test$SK_ID_CURR), TARGET = RF50TuneNodsPred)
+summary(submission)
+submission <- submission %>% rename ("TARGET" = "TARGET..pred_Yes") %>% select(c(SK_ID_CURR, TARGET))
+write.csv(submission, file = 'RF50TuneNodsmodel.csv', row.names = FALSE)
+    
+toc()
+
+```
+
+
+#RF 100 Tune Grid, 1.5 DownSample
+```{r}
+
+tic()
+set.seed(123)
+#Create Random Forest Train Data set
+RF100Tune1.5ds <- clean_train
+
+#Split Data 75% Training 25% Test
+RF100Tune1.5dssplit <- initial_split(RF100Tune1.5ds, strata = TARGET, prop = 0.75)
+RF100Tune1.5dstrain <- training(RF100Tune1.5dssplit)
+RF100Tune1.5dstest <- testing(RF100Tune1.5dssplit)
+
+#Create Recipe with 1.5 Downsample
+RF100Tune1.5dsrecipe <- recipe(TARGET ~ ., data = RF100Tune1.5dstrain) %>% step_downsample(TARGET, under_ratio = 1.5)
+
+#Create Model with Hyperperameter Tuning (Set Perameters based on tuning to save run time)
+RF100Tune1.5dsmodel <- rand_forest(
+  mtry = (2),
+  trees = (1003),
+  min_n = (33)) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+#Set 5 fold CV
+RF100Tune1.5dsfolds <- vfold_cv(RF100Tune1.5dstrain, v=5)
+
+doParallel::registerDoParallel(cores = 8)
+
+#Create Workflow
+RF100Tune1.5ds_WF <- workflow () %>%
+    add_model(RF100Tune1.5dsmodel) %>%
+    add_recipe(RF100Tune1.5dsrecipe)
+
+#Tune Model with grid = 50 (very time intensive)
+# 100 Grid gives mtry (2) trees (1003) min_n (33)
+#RF100Tune1.5ds_tune <- RF100Tune1.5ds_WF %>% tune_grid( resamples = RF100Tune1.5dsfolds, grid = 100)
+
+#Create Best model using ROC_AUC
+#best_modelRF100Tune1.5ds <- RF100Tune1.5ds_tune %>% select_best ("roc_auc")
+#best_modelRF100Tune1.5ds
+
+#Create final WF based on best model
+finalWFRF100Tune1.5dsmodel <- RF100Tune1.5ds_WF %>% finalize_workflow(RF100Tune1.5dsmodel)
+
+#Create final fit
+final_fitRF100Tune1.5dsmodel <- finalWFRF100Tune1.5dsmodel %>% last_fit(split = RF100Tune1.5dssplit)
+
+#Run Final Fit
+final_fitRF100Tune1.5dsmodel %>% collect_metrics()
+
+#Create Confusion matrix
+final_fitRF100Tune1.5dsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#extract WF
+final_wfRF100Tune1.5dsmodel <- final_fitRF100Tune1.5dsmodel %>%
+  extract_workflow()
+final_wfRF100Tune1.5dsmodel
+
+#Predict on test data
+RF100Tune1.5dsPred <- predict(final_wfRF100Tune1.5dsmodel, new_data = clean_test, type = 'prob')
+#Generate Submission
+submission <- data.frame(SK_ID_CURR = as.integer(clean_test$SK_ID_CURR), TARGET = RF100Tune1.5dsPred)
+summary(submission)
+submission <- submission %>% rename ("TARGET" = "TARGET..pred_Yes") %>% select(c(SK_ID_CURR, TARGET))
+write.csv(submission, file = 'RF100Tune1.5dsmodel.csv', row.names = FALSE)
+    
+toc()
+
+```
+
+#RF 100 Tune Grid, No DownSample
+```{r}
+
+tic()
+set.seed(123)
+#Create Random Forest Train Data set
+RF100TuneNods <- clean_train
+
+#Split Data 75% Training 25% Test
+RF100TuneNodssplit <- initial_split(RF100TuneNods, strata = TARGET, prop = 0.75)
+RF100TuneNodstrain <- training(RF100TuneNodssplit)
+RF100TuneNodstest <- testing(RF100TuneNodssplit)
+
+#Create Recipe with 1.5 Downsample
+RF100TuneNodsrecipe <- recipe(TARGET ~ ., data = RF100TuneNodstrain)
+
+#Create Model with Hyperperameter Tuning (Set Perameters based on tuning to save run time)
+RF100TuneNodsmodel <- rand_forest(
+  mtry = (2),
+  trees = (1003),
+  min_n = (33)) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+#Set 5 fold CV
+RF100TuneNodsfolds <- vfold_cv(RF100TuneNodstrain, v=5)
+
+doParallel::registerDoParallel(cores = 8)
+
+#Create Workflow
+RF100TuneNods_WF <- workflow () %>%
+    add_model(RF100TuneNodsmodel) %>%
+    add_recipe(RF100TuneNodsrecipe)
+
+#Tune Model with grid = 50 (very time intensive)
+# 100 Grid gives mtry (2) trees (1003) min_n (33)
+#RF100TuneNods_tune <- RF100TuneNods_WF %>% tune_grid( resamples = RF100TuneNodsfolds, grid = 100)
+
+#Create Best model using ROC_AUC
+#best_modelRF100TuneNods <- RF100TuneNods_tune %>% select_best ("roc_auc")
+#best_modelRF100TuneNods
+
+#Create final WF based on best model
+finalWFRF100TuneNodsmodel <- RF100TuneNods_WF %>% finalize_workflow(RF100TuneNodsmodel)
+
+#Create final fit
+final_fitRF100TuneNodsmodel <- finalWFRF100TuneNodsmodel %>% last_fit(split = RF100TuneNodssplit)
+
+#Run Final Fit
+final_fitRF100TuneNodsmodel %>% collect_metrics()
+
+#Create Confusion matrix
+final_fitRF100TuneNodsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#extract WF
+final_wfRF100TuneNodsmodel <- final_fitRF100TuneNodsmodel %>%
+  extract_workflow()
+final_wfRF100TuneNodsmodel
+
+#Predict on test data
+RF100TuneNodsPred <- predict(final_wfRF100TuneNodsmodel, new_data = clean_test, type = 'prob')
+#Generate Submission
+submission <- data.frame(SK_ID_CURR = as.integer(clean_test$SK_ID_CURR), TARGET = RF100TuneNodsPred)
+summary(submission)
+submission <- submission %>% rename ("TARGET" = "TARGET..pred_Yes") %>% select(c(SK_ID_CURR, TARGET))
+write.csv(submission, file = 'RF100TuneNodsmodel.csv', row.names = FALSE)
+    
+toc()
+
+```
+
+#Summary
+When running the Random Forest Models we attempted 2 different modeling variations, different size tuning grids and with or with out downsampling. With using different size tuning grids we found that 50 was the spot where we achieved the highest AUC. It is also should be noted that increasing the Tuning grid number added significant computational time. In all of our models we also found that DownSampeling was preferred over not. With out downsampling we found the model did not return nearly any predictions of default. This gave our best model from the tests to be a tuning grid of 50 with downsampling of 1.5, which gave us an AUC of .743 and an Accuracy of .815.
+
+#Results Summary
+```{r}
+
+#1 Tune Grid 1.5 DS Results
+final_fitRF1Tune1.5dsmodel %>% collect_metrics()
+
+final_fitRF1Tune1.5dsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#1 Tune Grid No DS Results
+final_fitRF1TuneNodsmodel %>% collect_metrics()
+
+final_fitRF1TuneNodsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#50 Tune Grid 1.5 DS Results
+final_fitRF50Tune1.5dsmodel %>% collect_metrics()
+
+final_fitRF50Tune1.5dsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#50 Tune Grid No DS Results
+final_fitRF50TuneNodsmodel %>% collect_metrics()
+
+final_fitRF50TuneNodsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#100 Tune Grid 1.5 DS Results
+final_fitRF100Tune1.5dsmodel %>% collect_metrics()
+
+final_fitRF100Tune1.5dsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+#100 Tune Grid No DS Results
+final_fitRF100TuneNodsmodel %>% collect_metrics()
+
+final_fitRF100TuneNodsmodel %>%
+  collect_predictions()%>%
+  conf_mat(truth = TARGET, estimate = .pred_class)
+
+```
